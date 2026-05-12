@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import torch
 from torch_geometric.data import Data
 
+
+
 def build_graph_dataset(df, feature_cols, target_col):
     df = df.copy()
     graph_list = []
@@ -246,3 +248,59 @@ def evaluate_model(model, test_loader, device, class_names=['Not Habitable', 'Ha
     plt.show()
 
     return all_labels, all_preds
+
+
+
+
+
+def plot_explainable_system(star_name, graph_list, model, device):
+    model.eval()
+    
+    # 1. Buscar el sistema
+    target_graph = next((g for g in graph_list if g.star_name == star_name), None)
+    if target_graph is None:
+        print(f"Sistema {star_name} no encontrado.")
+        return
+
+    # 2. Obtener predicciones del modelo para este sistema
+    with torch.no_grad():
+        data = target_graph.to(device)
+        logits = model(data.x, data.edge_index)
+        probs = torch.nn.functional.softmax(logits, dim=1)
+        # Probabilidad de ser clase 1 (Habitable)
+        habitable_probs = probs[:, 1].cpu().numpy()
+        predictions = torch.argmax(logits, dim=1).cpu().numpy()
+
+    # 3. Crear el grafo de NetworkX
+    G = nx.Graph()
+    edges = target_graph.edge_index.t().tolist()
+    G.add_edges_from(edges)
+
+    # 4. Configurar colores y etiquetas
+    # Usamos un mapa de color de Rojo (0% habitable) a Verde (100% habitable)
+    node_colors = habitable_probs 
+    
+    plt.figure(figsize=(10, 8))
+    pos = nx.spring_layout(G, seed=42)
+    
+    # Dibujar las conexiones
+    nx.draw_networkx_edges(G, pos, alpha=0.3, edge_color='gray', width=1.5)
+    
+    # Dibujar los nodos
+    nodes = nx.draw_networkx_nodes(G, pos, 
+                                   node_color=node_colors, 
+                                   cmap=plt.cm.RdYlGn, # Red-Yellow-Green
+                                   node_size=1500,
+                                   edgecolors='black')
+
+    # Añadir etiquetas con el % de habitabilidad
+    labels = {i: f"P{i}\n{habitable_probs[i]:.2%}" for i in range(len(habitable_probs))}
+    nx.draw_networkx_labels(G, pos, labels, font_size=9, font_weight='bold')
+
+    # Añadir barra de color (Leyenda)
+    sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlGn, norm=plt.Normalize(vmin=0, vmax=1))
+    plt.colorbar(sm, label="Habitability Probability", ax=plt.gca())
+
+    plt.title(f"Interpretability Map: {star_name}\n(Model's Vision of the System)", fontsize=14)
+    plt.axis('off')
+    plt.show()
