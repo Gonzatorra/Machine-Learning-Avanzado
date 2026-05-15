@@ -1,12 +1,37 @@
+import os
+
+import numpy as np
 import pandas as pd
 import networkx as nx
-import matplotlib.pyplot as plt
+
 import torch
 from torch_geometric.data import Data
+from sklearn.metrics import confusion_matrix, classification_report
+
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 
 def build_graph_dataset(df, feature_cols, target_col):
+    """
+    Converts a planetary dataframe into a list of PyTorch Geometric graphs.
+
+    Each graph represents a single stellar system (hostname). In these graphs, 
+    planets are nodes and their gravitational/spatial relationships are edges.
+
+    Args:
+        df (pd.DataFrame): The input dataset containing planet features and system names.
+        feature_cols (list): A list of column names to be used as node features (e.g., mass, period).
+        target_col (str): The name of the column we want to predict (habitability).
+
+    Returns:
+        list: A list of torch_geometric.data.Data objects. Each object contains:
+            - x: Node features (the physical data of the planets).
+            - edge_index: Graph connectivity (how planets are linked).
+            - y: The target labels for each planet.
+            - star_name: The name of the host star for reference.
+    """
     df = df.copy()
     graph_list = []
     
@@ -43,8 +68,24 @@ def build_graph_dataset(df, feature_cols, target_col):
 
 
 
+
+
 def plot_stellar_graph(graph_list, star_name):
-    # 1. Buscamos el grafo específico en nuestra lista
+    """
+    Visualizes the graph topology of a specific stellar system.
+
+    This function converts a PyTorch Geometric Data object into a NetworkX graph 
+    to create a 2D visualization of the planetary system's structure.
+
+    Args:
+        graph_list (list): A list of torch_geometric.data.Data objects created by build_graph_dataset.
+        star_name (str): The name of the host star (hostname) to be searched and visualized.
+
+    Returns:
+        None: The function displays a Matplotlib plot showing the nodes (planets) 
+              and edges (gravitational/spatial connections).
+    """
+    # Search for the specific graph in our list
     target_graph = None
     for g in graph_list:
         if g.star_name == star_name:
@@ -55,22 +96,23 @@ def plot_stellar_graph(graph_list, star_name):
         print(f"Star system '{star_name}' not found.")
         return
 
-    # 2. Convertimos el objeto Data de PyTorch Geometric a un grafo de NetworkX
+    # Convert the PyTorch Geometric Data object to a NetworkX graph
     G = nx.Graph()
     
-    # Añadimos los nodos (planetas)
+    # Add nodes (representing planets)
     num_nodes = target_graph.num_nodes
     for i in range(num_nodes):
-        # El label será el índice del planeta
+        # Use the planet index as the node label
         G.add_node(i)
         
-    # Añadimos las aristas (conexiones)
+    # Add edges (representing gravitational/spatial connections)
     edges = target_graph.edge_index.t().tolist()
     G.add_edges_from(edges)
 
-    # 3. Dibujamos el grafo
+    # Draw the graph using Matplotlib
     plt.figure(figsize=(8, 6))
-    pos = nx.spring_layout(G, seed=42) # Layout para que se vea ordenado
+    # Use spring_layout for an organized and aesthetic distribution of nodes
+    pos = nx.spring_layout(G, seed=111)
     
     nx.draw(G, pos, 
             with_labels=True, 
@@ -84,19 +126,109 @@ def plot_stellar_graph(graph_list, star_name):
     plt.show()
     
     
+
+
+
+ 
+
+def plot_explainable_system(star_name, graph_list, model, device):
+    """
+    Creates an interpretability map for a specific stellar system.
+
+    This function visualizes how the model "sees" a system by coloring planets 
+    based on their predicted probability of habitability, moving from Red (Low) 
+    to Green (High).
+
+    Args:
+        star_name (str): The name of the stellar system to visualize.
+        graph_list (list): List of torch_geometric.data.Data objects.
+        model (torch.nn.Module): The trained GNN model.
+        device (str): The device for computation ("cpu" or "cuda").
+
+    Returns:
+        None: Displays a color-coded graph representing model confidence.
+    """
+    model.eval()
     
+    # Search for the specific system
+    target_graph = next((g for g in graph_list if g.star_name == star_name), None)
+    if target_graph is None:
+        print(f"Sistema {star_name} no encontrado.")
+        return
+
+    # Get model predictions and probabilities for this system
+    with torch.no_grad():
+        data = target_graph.to(device)
+        logits = model(data.x, data.edge_index)
+        probs = torch.nn.functional.softmax(logits, dim=1)
+        
+        # Extract probability for Class 1 (Habitable)
+        habitable_probs = probs[:, 1].cpu().numpy()
+        predictions = torch.argmax(logits, dim=1).cpu().numpy()
+
+    # Create a NetworkX graph structure
+    G = nx.Graph()
+    edges = target_graph.edge_index.t().tolist()
+    G.add_edges_from(edges)
+
+    # Configure visual elements (colors and labels)
+    # Node colors are mapped to the probability values
+    node_colors = habitable_probs 
+    
+    plt.figure(figsize=(10, 8))
+    pos = nx.spring_layout(G, seed=111)
+    
+    # Draw graph connections (edges) with transparency
+    nx.draw_networkx_edges(G, pos, alpha=0.3, edge_color='gray', width=1.5)
+    
+    # Draw nodes with a Red-Yellow-Green colormap (RdYlGn)
+    nodes = nx.draw_networkx_nodes(G, pos, 
+                                   node_color=node_colors, 
+                                   cmap=plt.cm.RdYlGn, # Red-Yellow-Green
+                                   node_size=1500,
+                                   edgecolors='black')
+
+    # Add labels showing Planet index (P) and the habitability percentage
+    labels = {i: f"P{i}\n{habitable_probs[i]:.2%}" for i in range(len(habitable_probs))}
+    nx.draw_networkx_labels(G, pos, labels, font_size=9, font_weight='bold')
+
+    # Add a color bar legend to translate colors into probability values
+    sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlGn, norm=plt.Normalize(vmin=0, vmax=1))
+    plt.colorbar(sm, label="Habitability Probability", ax=plt.gca())
+
+    plt.title(f"Interpretability Map: {star_name}\n(Model's Vision of the System)", fontsize=14)
+    plt.axis('off')
+    plt.show()
+
+
+
+
+
 def check_connectivity(graph_list):
+    """
+    Validates the edge structure for all systems in the dataset.
+
+    This function ensures that multi-planet systems are modeled as "Complete Graphs," 
+    meaning every planet is connected to every other planet in its system.
+
+    Args:
+        graph_list (list): A list of torch_geometric.data.Data objects.
+
+    Returns:
+        None: The function prints a success message or a warning with the error count.
+    """
     errors = 0
     for g in graph_list:
         n = g.num_nodes
-        # In a fully connected graph (without self-loops): edges = n * (n-1)
+        # In a fully connected graph (without self-loops): edges = n * (n - 1)
+        # For example: 3 nodes should have 3 * 2 = 6 directed edges
         if n > 1:
             expected_edges = n * (n - 1)
             if g.edge_index.shape[1] != expected_edges:
                 errors += 1
     
     if errors == 0:
-        print("Perfect Connectivity! All multi-planet systems are complete graphs.")
+        print("Perfect Connectivity. All multi-planet systems are complete graphs.")
     else:
         print(f"Warning: {errors} systems have unexpected connectivity.")
         
@@ -109,19 +241,27 @@ def check_connectivity(graph_list):
         
         
         
-        
-        
-import os
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import confusion_matrix, classification_report
-
 def train_model(model, train_loader, val_loader, criterion, optimizer, 
                 device="cpu", epochs=200, patience=10, save_path="best_gnn_model.pth"):
     """
-    Train a GNN model with Early Stopping and best model saving.
+    Trains the GNN model using a training and validation loop with Early Stopping.
+
+    This function optimizes the model weights, tracks performance metrics across epochs,
+    and saves the best version of the model to prevent overfitting.
+
+    Args:
+        model (torch.nn.Module): The GNN model to be trained.
+        train_loader (DataLoader): DataLoader containing the training graph dataset.
+        val_loader (DataLoader): DataLoader containing the validation graph dataset.
+        criterion (loss function): The objective function (e.g., CrossEntropyLoss).
+        optimizer (optimizer): The optimization algorithm (e.g., Adam).
+        device (str): The device to run the training on ("cpu" or "cuda").
+        epochs (int): Maximum number of passes through the complete dataset.
+        patience (int): Number of epochs to wait for improvement before stopping.
+        save_path (str): File path to save the best model weights.
+
+    Returns:
+        tuple: (trained_model, history) where history is a dictionary of metrics.
     """
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
     model.to(device)
@@ -197,9 +337,25 @@ def train_model(model, train_loader, val_loader, criterion, optimizer,
     model.load_state_dict(torch.load(save_path))
     return model, history
 
+
+
+
+
 def evaluate_model(model, test_loader, device, class_names=['Not Habitable', 'Habitable']):
     """
-    Evaluate the GNN and plot metrics.
+    Evaluates the GNN performance and generates visual metrics.
+
+    This function tests the model on unseen data, calculates the accuracy of predictions, 
+    and plots both a Normalized Confusion Matrix and a comparison bar chart.
+
+    Args:
+        model (torch.nn.Module): The trained GNN model.
+        test_loader (DataLoader): DataLoader containing the test graph dataset.
+        device (str): The device to run evaluation on ("cpu" or "cuda").
+        class_names (list): Labels for the categories (e.g., 'Not Habitable', 'Habitable').
+
+    Returns:
+        tuple: (all_labels, all_preds) containing the true labels and model predictions.
     """
     model.eval()
     all_preds = []
@@ -208,7 +364,9 @@ def evaluate_model(model, test_loader, device, class_names=['Not Habitable', 'Ha
     with torch.no_grad():
         for data in test_loader:
             data = data.to(device)
+            # Forward pass: get model scores
             out = model(data.x, data.edge_index)
+            # Pick the class with the highest score as the prediction
             preds = out.argmax(dim=1)
             
             all_preds.extend(preds.cpu().numpy())
@@ -223,7 +381,7 @@ def evaluate_model(model, test_loader, device, class_names=['Not Habitable', 'Ha
 
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Greens',
-                xticklabels=class_names, yticklabels=class_names)
+                xticklabels=class_names, yticklabels=class_names, vmin=0, vmax=1)
     plt.xlabel('Predicted')
     plt.ylabel('Actual')
     plt.title('Normalized Confusion Matrix')
@@ -251,56 +409,3 @@ def evaluate_model(model, test_loader, device, class_names=['Not Habitable', 'Ha
 
 
 
-
-
-def plot_explainable_system(star_name, graph_list, model, device):
-    model.eval()
-    
-    # 1. Buscar el sistema
-    target_graph = next((g for g in graph_list if g.star_name == star_name), None)
-    if target_graph is None:
-        print(f"Sistema {star_name} no encontrado.")
-        return
-
-    # 2. Obtener predicciones del modelo para este sistema
-    with torch.no_grad():
-        data = target_graph.to(device)
-        logits = model(data.x, data.edge_index)
-        probs = torch.nn.functional.softmax(logits, dim=1)
-        # Probabilidad de ser clase 1 (Habitable)
-        habitable_probs = probs[:, 1].cpu().numpy()
-        predictions = torch.argmax(logits, dim=1).cpu().numpy()
-
-    # 3. Crear el grafo de NetworkX
-    G = nx.Graph()
-    edges = target_graph.edge_index.t().tolist()
-    G.add_edges_from(edges)
-
-    # 4. Configurar colores y etiquetas
-    # Usamos un mapa de color de Rojo (0% habitable) a Verde (100% habitable)
-    node_colors = habitable_probs 
-    
-    plt.figure(figsize=(10, 8))
-    pos = nx.spring_layout(G, seed=42)
-    
-    # Dibujar las conexiones
-    nx.draw_networkx_edges(G, pos, alpha=0.3, edge_color='gray', width=1.5)
-    
-    # Dibujar los nodos
-    nodes = nx.draw_networkx_nodes(G, pos, 
-                                   node_color=node_colors, 
-                                   cmap=plt.cm.RdYlGn, # Red-Yellow-Green
-                                   node_size=1500,
-                                   edgecolors='black')
-
-    # Añadir etiquetas con el % de habitabilidad
-    labels = {i: f"P{i}\n{habitable_probs[i]:.2%}" for i in range(len(habitable_probs))}
-    nx.draw_networkx_labels(G, pos, labels, font_size=9, font_weight='bold')
-
-    # Añadir barra de color (Leyenda)
-    sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlGn, norm=plt.Normalize(vmin=0, vmax=1))
-    plt.colorbar(sm, label="Habitability Probability", ax=plt.gca())
-
-    plt.title(f"Interpretability Map: {star_name}\n(Model's Vision of the System)", fontsize=14)
-    plt.axis('off')
-    plt.show()
