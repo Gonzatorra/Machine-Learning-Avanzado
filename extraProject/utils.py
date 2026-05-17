@@ -1,3 +1,6 @@
+#-----------------------#
+#------ LIBRARIES ------#
+#-----------------------#
 import os
 
 import numpy as np
@@ -13,6 +16,11 @@ import seaborn as sns
 
 
 
+
+
+#-------------------#
+#------ PLOTS ------#
+#-------------------#
 def build_graph_dataset(df, feature_cols, target_col):
     """
     Converts a planetary dataframe into a list of PyTorch Geometric graphs.
@@ -231,6 +239,7 @@ def check_connectivity(graph_list):
         print("Perfect Connectivity. All multi-planet systems are complete graphs.")
     else:
         print(f"Warning: {errors} systems have unexpected connectivity.")
+  
         
         
         
@@ -240,7 +249,9 @@ def check_connectivity(graph_list):
         
         
         
-        
+#--------------------#
+#------ MODELS ------#
+#--------------------#        
 def train_model(model, train_loader, val_loader, criterion, optimizer, 
                 device="cpu", epochs=200, patience=10, save_path="best_gnn_model.pth"):
     """
