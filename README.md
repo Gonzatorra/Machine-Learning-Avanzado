@@ -46,6 +46,7 @@ To evaluate habitability within a stellar environment, tabular data is transform
 The project built and compared multiple GNN architectures implemented with PyTorch Geometric:
 
 * **GraphSAGE**: Highly interpretability-friendly architecture that respects physical constraints well.
+* **GATv1 (Graph Attention Network v1)**: An early attention-based architecture where nodes compute a static attention weight for their neighbors. However, it suffers from a structural limitation where the attention ranking is global (the most important neighbor is the same for every node), which restricts its ability to capture highly localized, unique planetary interactions. 
 * **GATv2 (Graph Attention Network v2)**: Dynamic attention-based model allowing nodes to weigh their neighbors' influences differently.
 
 ### Final Choice: **GATv2 + Class Weights**
